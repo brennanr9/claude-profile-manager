@@ -110,48 +110,40 @@ export async function listMarketplace(options) {
       return;
     }
     
-    // Group by category
-    const byCategory = {};
-    
-    for (const profile of index.profiles) {
-      const cats = profile.tags || ['uncategorized'];
-      for (const cat of cats) {
-        if (options.category && cat !== options.category) continue;
-        
-        if (!byCategory[cat]) {
-          byCategory[cat] = [];
-        }
-        byCategory[cat].push(profile);
-      }
+    // Filter by category if specified
+    let profiles = index.profiles;
+    if (options.category) {
+      profiles = profiles.filter(p =>
+        (p.tags || []).includes(options.category)
+      );
     }
-    
-    for (const [category, profiles] of Object.entries(byCategory)) {
-      console.log(chalk.magenta(`[${category}]`));
-      console.log('');
-      
-      for (const profile of profiles) {
-        const fullName = `${profile.author}/${profile.name}`;
-        console.log(`  ${chalk.cyan(fullName)} ${chalk.dim('v' + (profile.version || '1.0.0'))}`);
 
-        if (profile.description) {
-          console.log(`    ${chalk.dim(profile.description.slice(0, 60))}${profile.description.length > 60 ? '...' : ''}`);
-        }
+    for (const profile of profiles) {
+      const fullName = `${profile.author}/${profile.name}`;
+      console.log(`  ${chalk.cyan(fullName)} ${chalk.dim('v' + (profile.version || '1.0.0'))}`);
 
-        // Show contents breakdown
-        const contentsLines = formatContentsLines(profile.contents);
-        for (const line of contentsLines) {
-          console.log(line);
-        }
-
-        const stats = [];
-        if (profile.downloads) stats.push(`↓${profile.downloads}`);
-        if (profile.stars) stats.push(`★${profile.stars}`);
-        if (stats.length) {
-          console.log(`    ${chalk.yellow(stats.join(' • '))}`);
-        }
-
-        console.log('');
+      if (profile.description) {
+        console.log(`    ${chalk.dim(profile.description.slice(0, 60))}${profile.description.length > 60 ? '...' : ''}`);
       }
+
+      // Show contents breakdown
+      const contentsLines = formatContentsLines(profile.contents);
+      for (const line of contentsLines) {
+        console.log(line);
+      }
+
+      if (profile.tags?.length) {
+        console.log(`    ${chalk.yellow(profile.tags.join(', '))}`);
+      }
+
+      const stats = [];
+      if (profile.downloads) stats.push(`↓${profile.downloads}`);
+      if (profile.stars) stats.push(`★${profile.stars}`);
+      if (stats.length) {
+        console.log(`    ${chalk.yellow(stats.join(' • '))}`);
+      }
+
+      console.log('');
     }
     
     console.log(chalk.dim('Install a profile:'));
