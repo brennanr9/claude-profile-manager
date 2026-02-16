@@ -9,6 +9,36 @@ import { extractDownloadedSnapshot } from '../utils/snapshot.js';
 
 const INDEX_CACHE_TIME = 60 * 60 * 1000; // 1 hour
 
+// Display labels for content categories
+const CATEGORY_LABELS = {
+  commands: 'Commands',
+  skills: 'Skills',
+  mcp: 'MCP Servers',
+  mcp_servers: 'MCP Servers',
+  agents: 'Agents',
+  plugins: 'Plugins',
+  hooks: 'Hooks',
+  instructions: 'Instructions'
+};
+
+/**
+ * Format a contents object into display lines
+ */
+function formatContentsLines(contents, indent = '    ') {
+  if (!contents || Object.keys(contents).length === 0) return [];
+
+  const lines = [];
+  for (const [category, items] of Object.entries(contents)) {
+    if (!items || items.length === 0) continue;
+    const label = CATEGORY_LABELS[category] || category;
+    const display = category === 'commands'
+      ? items.map(i => `/${i}`).join(', ')
+      : items.join(', ');
+    lines.push(`${indent}${chalk.white(label + ':')} ${chalk.dim(display)}`);
+  }
+  return lines;
+}
+
 /**
  * Get the marketplace index (list of all profiles)
  */
@@ -102,18 +132,24 @@ export async function listMarketplace(options) {
       for (const profile of profiles) {
         const fullName = `${profile.author}/${profile.name}`;
         console.log(`  ${chalk.cyan(fullName)} ${chalk.dim('v' + (profile.version || '1.0.0'))}`);
-        
+
         if (profile.description) {
           console.log(`    ${chalk.dim(profile.description.slice(0, 60))}${profile.description.length > 60 ? '...' : ''}`);
         }
-        
+
+        // Show contents breakdown
+        const contentsLines = formatContentsLines(profile.contents);
+        for (const line of contentsLines) {
+          console.log(line);
+        }
+
         const stats = [];
         if (profile.downloads) stats.push(`↓${profile.downloads}`);
         if (profile.stars) stats.push(`★${profile.stars}`);
         if (stats.length) {
           console.log(`    ${chalk.yellow(stats.join(' • '))}`);
         }
-        
+
         console.log('');
       }
     }
@@ -251,7 +287,17 @@ export async function showMarketplaceInfo(profilePath) {
     if (metadata.updatedAt) {
       console.log(chalk.cyan('Updated:     ') + new Date(metadata.updatedAt).toLocaleDateString());
     }
-    
+
+    // Show contents breakdown
+    if (metadata.contents && Object.keys(metadata.contents).length > 0) {
+      console.log('');
+      console.log(chalk.bold('Contents:'));
+      const contentsLines = formatContentsLines(metadata.contents, '  ');
+      for (const line of contentsLines) {
+        console.log(line);
+      }
+    }
+
     console.log('');
     console.log(chalk.dim('Install with:'));
     console.log(chalk.cyan(`  cpm install ${author}/${name}`));

@@ -3,13 +3,53 @@ import ora from 'ora';
 import inquirer from 'inquirer';
 import { existsSync, rmSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
-import { 
-  createSnapshot, 
-  extractSnapshot, 
+import {
+  createSnapshot,
+  extractSnapshot,
   readProfileMetadata,
-  listLocalProfileNames 
+  listLocalProfileNames,
+  deriveContents
 } from '../utils/snapshot.js';
 import { getConfig, claudeDirExists, getProfilePath } from '../utils/config.js';
+
+// Display labels for content categories
+const CATEGORY_LABELS = {
+  commands: 'Commands',
+  skills: 'Skills',
+  mcp: 'MCP Servers',
+  mcp_servers: 'MCP Servers',
+  agents: 'Agents',
+  plugins: 'Plugins',
+  hooks: 'Hooks',
+  instructions: 'Instructions'
+};
+
+/**
+ * Get contents from metadata, falling back to deriving from files list
+ */
+function getContents(metadata) {
+  if (metadata?.contents) return metadata.contents;
+  if (metadata?.files) return deriveContents(metadata.files);
+  return {};
+}
+
+/**
+ * Format a contents object into display lines
+ */
+function formatContentsLines(contents, indent = '    ') {
+  if (!contents || Object.keys(contents).length === 0) return [];
+
+  const lines = [];
+  for (const [category, items] of Object.entries(contents)) {
+    if (!items || items.length === 0) continue;
+    const label = CATEGORY_LABELS[category] || category;
+    const display = category === 'commands'
+      ? items.map(i => `/${i}`).join(', ')
+      : items.join(', ');
+    lines.push(`${indent}${chalk.white(label + ':')} ${chalk.dim(display)}`);
+  }
+  return lines;
+}
 
 /**
  * Save current .claude folder as a profile
@@ -145,14 +185,21 @@ export async function listLocalProfiles() {
   
   for (const name of profiles) {
     const metadata = readProfileMetadata(name);
-    
+
     console.log(chalk.cyan('  ' + name));
-    
+
     if (metadata) {
       if (metadata.description) {
         console.log(chalk.dim(`    ${metadata.description}`));
       }
-      
+
+      // Show contents breakdown
+      const contents = getContents(metadata);
+      const contentsLines = formatContentsLines(contents);
+      for (const line of contentsLines) {
+        console.log(line);
+      }
+
       const info = [];
       if (metadata.tags?.length) {
         info.push(chalk.yellow(metadata.tags.join(', ')));
@@ -161,15 +208,12 @@ export async function listLocalProfiles() {
         const date = new Date(metadata.createdAt).toLocaleDateString();
         info.push(chalk.dim(date));
       }
-      if (metadata.files?.length) {
-        info.push(chalk.dim(`${metadata.files.length} files`));
-      }
-      
+
       if (info.length) {
         console.log(`    ${info.join(' • ')}`);
       }
     }
-    
+
     console.log('');
   }
   
@@ -235,24 +279,26 @@ export async function showProfileInfo(name) {
   console.log(chalk.cyan('Platform:    ') + (metadata?.platform || chalk.dim('Unknown')));
   console.log(chalk.cyan('Claude Ver:  ') + (metadata?.claudeVersion || chalk.dim('Unknown')));
   
-  console.log('');
-  console.log(chalk.bold('Files Included:'));
-  
+  // Show structured contents
+  const contents = getContents(metadata);
+  if (Object.keys(contents).length > 0) {
+    console.log('');
+    console.log(chalk.bold('Contents:'));
+    const contentsLines = formatContentsLines(contents, '  ');
+    for (const line of contentsLines) {
+      console.log(line);
+    }
+  }
+
+  // Show raw file list for full detail
   if (metadata?.files?.length) {
-    const maxShow = 15;
-    const files = metadata.files.slice(0, maxShow);
-    
-    for (const file of files) {
+    console.log('');
+    console.log(chalk.bold('Files:'));
+    for (const file of metadata.files) {
       console.log(chalk.dim('  • ') + file);
     }
-    
-    if (metadata.files.length > maxShow) {
-      console.log(chalk.dim(`  ... and ${metadata.files.length - maxShow} more files`));
-    }
-  } else {
-    console.log(chalk.dim('  No file information available'));
   }
-  
+
   console.log('');
   console.log(chalk.dim('Location: ') + profilePath);
   console.log('');

@@ -1,0 +1,23 @@
+{
+  "name": "devtools",
+  "version": "1.0.0",
+  "description": "Developer productivity commands for dependency auditing, performance profiling, and scaffolding",
+  "author": "marketplace",
+  "tags": ["productivity", "scaffolding", "dependencies"],
+  "createdAt": "2026-02-16T00:00:00Z",
+  "platform": "cross-platform",
+  "claudeVersion": "1.0.0",
+  "includesSecrets": false,
+  "files": [
+    "CLAUDE.md",
+    "commands/deps.md",
+    "commands/perf.md",
+    "commands/scaffold.md",
+    "hooks/pre-commit.md"
+  ],
+  "contents": {
+    "instructions": ["CLAUDE.md"],
+    "commands": ["deps", "perf", "scaffold"],
+    "hooks": ["pre-commit"]
+  }
+}

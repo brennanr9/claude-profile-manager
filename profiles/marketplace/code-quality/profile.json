@@ -1,0 +1,23 @@
+{
+  "name": "code-quality",
+  "version": "1.0.0",
+  "description": "Code review, test generation, and type safety commands with quality-focused hooks",
+  "author": "marketplace",
+  "tags": ["code-review", "testing", "type-safety"],
+  "createdAt": "2026-02-16T00:00:00Z",
+  "platform": "cross-platform",
+  "claudeVersion": "1.0.0",
+  "includesSecrets": false,
+  "files": [
+    "CLAUDE.md",
+    "commands/review.md",
+    "commands/test-gen.md",
+    "commands/types.md",
+    "hooks/post-save.md"
+  ],
+  "contents": {
+    "instructions": ["CLAUDE.md"],
+    "commands": ["review", "test-gen", "types"],
+    "hooks": ["post-save"]
+  }
+}

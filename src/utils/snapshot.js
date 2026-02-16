@@ -17,17 +17,13 @@ const DEFAULT_EXCLUDES = [
   '.git'
 ];
 
-// Files that are safe to include (allowlist approach)
+// Files that are safe to include (functional customizations only)
 const SAFE_INCLUDES = [
-  'settings.json',
-  'settings.local.json',
   'CLAUDE.md',
-  'README.md',
-  'README',
   'commands',
   'commands/**',
-  'templates',
-  'templates/**',
+  'skills',
+  'skills/**',
   'hooks',
   'hooks/**',
   'plugins',
@@ -35,7 +31,8 @@ const SAFE_INCLUDES = [
   'mcp.json',
   'mcp_servers',
   'mcp_servers/**',
-  'keybindings.json'
+  'agents',
+  'agents/**'
 ];
 
 /**
@@ -79,6 +76,8 @@ export async function createSnapshot(profileName, options = {}) {
   
   return new Promise((resolve, reject) => {
     output.on('close', async () => {
+      // Derive structured contents from file list
+      metadata.contents = deriveContentsWithMcp(metadata.files, claudeDir);
       // Save metadata
       writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
       resolve({ profileDir, metadata });
@@ -107,6 +106,70 @@ export async function createSnapshot(profileName, options = {}) {
     
     archive.finalize();
   });
+}
+
+/**
+ * Derive a structured contents summary from a list of file paths.
+ * Returns an object with category keys mapping to arrays of item names.
+ */
+export function deriveContents(files) {
+  const contents = {};
+
+  for (const file of files) {
+    const normalized = file.split(sep).join('/');
+
+    if (normalized === 'CLAUDE.md') {
+      if (!contents.instructions) contents.instructions = [];
+      contents.instructions.push('CLAUDE.md');
+      continue;
+    }
+
+    if (normalized === 'mcp.json') {
+      // Parse MCP server names from mcp.json if possible — but at derivation
+      // time we may not have access to file content, so just flag it
+      if (!contents.mcp) contents.mcp = [];
+      contents.mcp.push('mcp.json');
+      continue;
+    }
+
+    const parts = normalized.split('/');
+    if (parts.length >= 2) {
+      const category = parts[0];
+      // Use the immediate child name (file or subfolder)
+      const itemName = parts[1].replace(/\.[^.]+$/, ''); // strip extension
+      if (!contents[category]) contents[category] = [];
+      if (!contents[category].includes(itemName)) {
+        contents[category].push(itemName);
+      }
+    }
+  }
+
+  return contents;
+}
+
+/**
+ * Derive contents and try to enrich MCP server names from the actual mcp.json file
+ */
+function deriveContentsWithMcp(files, claudeDir) {
+  const contents = deriveContents(files);
+
+  // If mcp.json is in the file list, try to read server names from it
+  if (contents.mcp && claudeDir) {
+    try {
+      const mcpPath = join(claudeDir, 'mcp.json');
+      if (existsSync(mcpPath)) {
+        const mcpData = JSON.parse(readFileSync(mcpPath, 'utf-8'));
+        const serverNames = Object.keys(mcpData.mcpServers || mcpData);
+        if (serverNames.length > 0) {
+          contents.mcp = serverNames;
+        }
+      }
+    } catch {
+      // Keep the fallback
+    }
+  }
+
+  return contents;
 }
 
 /**

@@ -1,56 +1,51 @@
 {
   "version": "1.0.0",
-  "lastUpdated": "2025-02-15T00:00:00Z",
+  "lastUpdated": "2026-02-16T00:00:00Z",
   "profiles": [
     {
-      "name": "senior-developer",
+      "name": "devtools",
       "author": "marketplace",
       "version": "1.0.0",
-      "description": "Senior software engineer persona with focus on code review, architecture, and mentoring",
-      "tags": ["code-review", "architecture", "mentoring"],
+      "description": "Developer productivity commands for dependency auditing, performance profiling, and scaffolding",
+      "tags": ["productivity", "scaffolding", "dependencies"],
       "downloads": 0,
       "stars": 0,
-      "createdAt": "2025-02-15T00:00:00Z"
+      "createdAt": "2026-02-16T00:00:00Z",
+      "contents": {
+        "instructions": ["CLAUDE.md"],
+        "commands": ["deps", "perf", "scaffold"],
+        "hooks": ["pre-commit"]
+      }
     },
     {
-      "name": "security-auditor",
+      "name": "code-quality",
       "author": "marketplace",
       "version": "1.0.0",
-      "description": "Security-focused reviewer checking for OWASP vulnerabilities and best practices",
-      "tags": ["security", "owasp", "code-review"],
+      "description": "Code review, test generation, and type safety commands with quality-focused hooks",
+      "tags": ["code-review", "testing", "type-safety"],
       "downloads": 0,
       "stars": 0,
-      "createdAt": "2025-02-15T00:00:00Z"
+      "createdAt": "2026-02-16T00:00:00Z",
+      "contents": {
+        "instructions": ["CLAUDE.md"],
+        "commands": ["review", "test-gen", "types"],
+        "hooks": ["post-save"]
+      }
     },
     {
-      "name": "python-expert",
+      "name": "git-workflow",
       "author": "marketplace",
       "version": "1.0.0",
-      "description": "Python development expert with focus on idiomatic code, typing, and async patterns",
-      "tags": ["python", "typing", "async"],
+      "description": "Git workflow commands for PR creation, changelog generation, and commit management",
+      "tags": ["git", "workflow", "pull-requests"],
       "downloads": 0,
       "stars": 0,
-      "createdAt": "2025-02-15T00:00:00Z"
-    },
-    {
-      "name": "test-writer",
-      "author": "marketplace",
-      "version": "1.0.0",
-      "description": "Specialized in generating comprehensive test suites with high coverage",
-      "tags": ["testing", "tdd", "quality"],
-      "downloads": 0,
-      "stars": 0,
-      "createdAt": "2025-02-15T00:00:00Z"
-    },
-    {
-      "name": "docs-generator",
-      "author": "marketplace",
-      "version": "1.0.0",
-      "description": "Technical documentation writer for APIs, READMEs, and code comments",
-      "tags": ["documentation", "api-docs", "readme"],
-      "downloads": 0,
-      "stars": 0,
-      "createdAt": "2025-02-15T00:00:00Z"
+      "createdAt": "2026-02-16T00:00:00Z",
+      "contents": {
+        "instructions": ["CLAUDE.md"],
+        "commands": ["pr", "changelog", "squash"],
+        "hooks": ["pre-push"]
+      }
     }
   ]
 }
