@@ -1,4 +1,4 @@
-import { createWriteStream, createReadStream, existsSync, mkdirSync, readdirSync, statSync, rmSync, cpSync, readFileSync, writeFileSync, renameSync } from 'fs';
+import { createWriteStream, createReadStream, existsSync, mkdirSync, readdirSync, statSync, rmSync, cpSync, readFileSync, writeFileSync } from 'fs';
 import { join, basename, relative, sep } from 'path';
 import archiver from 'archiver';
 import extractZip from 'extract-zip';
@@ -190,12 +190,14 @@ function shouldExclude(name, path, excludes) {
 
 /**
  * Extract a snapshot to the .claude folder
+ * Uses a merge strategy to work even when Claude Code is running
  */
 export async function extractSnapshot(profileName, options = {}) {
   const config = await getConfig();
   const profileDir = join(config.profilesDir, profileName);
   const zipPath = join(profileDir, 'snapshot.zip');
   const claudeDir = config.claudeDir;
+  const tempExtractDir = join(config.cacheDir, `extract-${Date.now()}`);
   
   if (!existsSync(zipPath)) {
     throw new Error(`Profile "${profileName}" not found or corrupted`);
@@ -208,44 +210,44 @@ export async function extractSnapshot(profileName, options = {}) {
     cpSync(claudeDir, backupPath, { recursive: true });
   }
 
-  // Clear existing .claude directory (if force or confirmed)
-  if (existsSync(claudeDir)) {
-    if (!options.force) {
-      throw new Error('Claude directory exists. Use --force to overwrite or --backup to save current config.');
-    }
-
-    // Use rename instead of rmSync to avoid permission issues with open file handles
-    // This works even if Claude Code is running
-    const tempName = `${claudeDir}-removing-${Date.now()}`;
-    try {
-      renameSync(claudeDir, tempName);
-      // Try to delete the renamed folder, but don't fail if it's locked
-      try {
-        rmSync(tempName, { recursive: true, force: true });
-      } catch (cleanupErr) {
-        // Folder will be cleaned up later or manually - not critical
-      }
-    } catch (err) {
-      throw new Error(`Cannot replace .claude folder. Please close Claude Code and try again.\n  ${err.message}`);
-    }
+  // Check if we need force flag
+  if (existsSync(claudeDir) && !options.force) {
+    throw new Error('Claude directory exists. Use --force to overwrite or --backup to save current config.');
   }
 
-  // Create fresh .claude directory
-  mkdirSync(claudeDir, { recursive: true });
-  
-  // Extract snapshot
-  await extractZip(zipPath, { dir: claudeDir });
-  
-  return { claudeDir };
+  try {
+    // Extract to temp directory first
+    mkdirSync(tempExtractDir, { recursive: true });
+    await extractZip(zipPath, { dir: tempExtractDir });
+
+    // Ensure .claude directory exists
+    mkdirSync(claudeDir, { recursive: true });
+
+    // Merge files into .claude (works even with locked files)
+    copyDirMerge(tempExtractDir, claudeDir);
+    
+    return { claudeDir };
+  } finally {
+    // Clean up temp directory
+    if (existsSync(tempExtractDir)) {
+      try {
+        rmSync(tempExtractDir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  }
 }
 
 /**
  * Extract a downloaded snapshot (from marketplace)
+ * Uses a merge strategy to work even when Claude Code is running
  */
 export async function extractDownloadedSnapshot(zipBuffer, options = {}) {
   const config = await getConfig();
   const claudeDir = config.claudeDir;
   const tempZip = join(config.cacheDir, `temp-${Date.now()}.zip`);
+  const tempExtractDir = join(config.cacheDir, `extract-${Date.now()}`);
   
   // Write buffer to temp file
   writeFileSync(tempZip, zipBuffer);
@@ -258,35 +260,64 @@ export async function extractDownloadedSnapshot(zipBuffer, options = {}) {
       cpSync(claudeDir, backupPath, { recursive: true });
     }
 
-    // Clear existing .claude directory
-    if (existsSync(claudeDir)) {
-      if (!options.force) {
-        throw new Error('Claude directory exists. Use --force to overwrite or --backup to save current config.');
-      }
-
-      // Use rename instead of rmSync to avoid permission issues with open file handles
-      const tempName = `${claudeDir}-removing-${Date.now()}`;
-      try {
-        renameSync(claudeDir, tempName);
-        // Try to delete the renamed folder, but don't fail if it's locked
-        try {
-          rmSync(tempName, { recursive: true, force: true });
-        } catch (cleanupErr) {
-          // Folder will be cleaned up later or manually - not critical
-        }
-      } catch (err) {
-        throw new Error(`Cannot replace .claude folder. Please close Claude Code and try again.\n  ${err.message}`);
-      }
+    // Check if we need force flag
+    if (existsSync(claudeDir) && !options.force) {
+      throw new Error('Claude directory exists. Use --force to overwrite or --backup to save current config.');
     }
 
+    // Extract to temp directory first
+    mkdirSync(tempExtractDir, { recursive: true });
+    await extractZip(tempZip, { dir: tempExtractDir });
+
+    // Ensure .claude directory exists
     mkdirSync(claudeDir, { recursive: true });
-    await extractZip(tempZip, { dir: claudeDir });
+
+    // Merge files into .claude (works even with locked files)
+    // Copy each file individually, overwriting existing ones
+    copyDirMerge(tempExtractDir, claudeDir);
     
     return { claudeDir };
   } finally {
-    // Clean up temp file
+    // Clean up temp files
     if (existsSync(tempZip)) {
       rmSync(tempZip);
+    }
+    if (existsSync(tempExtractDir)) {
+      try {
+        rmSync(tempExtractDir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  }
+}
+
+/**
+ * Recursively copy/merge directory contents, overwriting files
+ * This works even when the target directory has open file handles
+ */
+function copyDirMerge(src, dest) {
+  const entries = readdirSync(src, { withFileTypes: true });
+  
+  for (const entry of entries) {
+    const srcPath = join(src, entry.name);
+    const destPath = join(dest, entry.name);
+    
+    if (entry.isDirectory()) {
+      mkdirSync(destPath, { recursive: true });
+      copyDirMerge(srcPath, destPath);
+    } else {
+      // Copy file, overwriting if exists
+      try {
+        const content = readFileSync(srcPath);
+        writeFileSync(destPath, content);
+      } catch (err) {
+        // If file is locked, try to write with a slight delay
+        if (err.code === 'EBUSY') {
+          throw new Error(`Cannot write to ${entry.name} - file is locked. Please close Claude Code and try again.`);
+        }
+        throw err;
+      }
     }
   }
 }
