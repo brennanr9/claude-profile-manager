@@ -1,0 +1,12 @@
+{
+  "name": "docs-generator",
+  "version": "1.0.0",
+  "description": "Technical documentation writer for APIs, READMEs, and code comments",
+  "author": "marketplace",
+  "tags": ["documentation", "api-docs", "readme", "jsdoc"],
+  "createdAt": "2025-02-15T00:00:00Z",
+  "platform": "cross-platform",
+  "claudeVersion": "1.0.0",
+  "includesSecrets": false,
+  "files": ["settings.json", "CLAUDE.md", "commands/readme.md"]
+}

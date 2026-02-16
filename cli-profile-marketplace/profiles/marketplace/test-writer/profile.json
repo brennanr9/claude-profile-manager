@@ -1,0 +1,12 @@
+{
+  "name": "test-writer",
+  "version": "1.0.0",
+  "description": "Specialized in generating comprehensive test suites with high coverage",
+  "author": "marketplace",
+  "tags": ["testing", "tdd", "quality", "jest", "pytest"],
+  "createdAt": "2025-02-15T00:00:00Z",
+  "platform": "cross-platform",
+  "claudeVersion": "1.0.0",
+  "includesSecrets": false,
+  "files": ["settings.json", "CLAUDE.md", "commands/generate.md"]
+}

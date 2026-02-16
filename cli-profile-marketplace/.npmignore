@@ -1,0 +1,10 @@
+# Don't include profiles in npm package
+# (They're fetched from GitHub at runtime)
+profiles/
+
+# GitHub specific
+.github/
+
+# Dev files
+.gitignore
+CONTRIBUTING.md

@@ -1,0 +1,56 @@
+{
+  "version": "1.0.0",
+  "lastUpdated": "2025-02-15T00:00:00Z",
+  "profiles": [
+    {
+      "name": "senior-developer",
+      "author": "marketplace",
+      "version": "1.0.0",
+      "description": "Senior software engineer persona with focus on code review, architecture, and mentoring",
+      "tags": ["code-review", "architecture", "mentoring"],
+      "downloads": 0,
+      "stars": 0,
+      "createdAt": "2025-02-15T00:00:00Z"
+    },
+    {
+      "name": "security-auditor",
+      "author": "marketplace",
+      "version": "1.0.0",
+      "description": "Security-focused reviewer checking for OWASP vulnerabilities and best practices",
+      "tags": ["security", "owasp", "code-review"],
+      "downloads": 0,
+      "stars": 0,
+      "createdAt": "2025-02-15T00:00:00Z"
+    },
+    {
+      "name": "python-expert",
+      "author": "marketplace",
+      "version": "1.0.0",
+      "description": "Python development expert with focus on idiomatic code, typing, and async patterns",
+      "tags": ["python", "typing", "async"],
+      "downloads": 0,
+      "stars": 0,
+      "createdAt": "2025-02-15T00:00:00Z"
+    },
+    {
+      "name": "test-writer",
+      "author": "marketplace",
+      "version": "1.0.0",
+      "description": "Specialized in generating comprehensive test suites with high coverage",
+      "tags": ["testing", "tdd", "quality"],
+      "downloads": 0,
+      "stars": 0,
+      "createdAt": "2025-02-15T00:00:00Z"
+    },
+    {
+      "name": "docs-generator",
+      "author": "marketplace",
+      "version": "1.0.0",
+      "description": "Technical documentation writer for APIs, READMEs, and code comments",
+      "tags": ["documentation", "api-docs", "readme"],
+      "downloads": 0,
+      "stars": 0,
+      "createdAt": "2025-02-15T00:00:00Z"
+    }
+  ]
+}

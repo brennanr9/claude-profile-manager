@@ -1,0 +1,12 @@
+{
+  "name": "python-expert",
+  "version": "1.0.0",
+  "description": "Python development expert with focus on idiomatic code, typing, and async patterns",
+  "author": "marketplace",
+  "tags": ["python", "typing", "async", "best-practices"],
+  "createdAt": "2025-02-15T00:00:00Z",
+  "platform": "cross-platform",
+  "claudeVersion": "1.0.0",
+  "includesSecrets": false,
+  "files": ["settings.json", "CLAUDE.md", "commands/typing.md"]
+}

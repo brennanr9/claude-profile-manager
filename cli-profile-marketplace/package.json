@@ -1,0 +1,40 @@
+{
+  "name": "claude-profile-manager",
+  "version": "1.0.0",
+  "description": "Save, share, and load Claude CLI profiles - a marketplace for Claude configurations",
+  "main": "src/index.js",
+  "bin": {
+    "cpm": "src/cli.js",
+    "claude-profiles": "src/cli.js"
+  },
+  "scripts": {
+    "test": "node src/cli.js --help"
+  },
+  "keywords": [
+    "claude",
+    "anthropic",
+    "cli",
+    "profiles",
+    "configuration",
+    "dotfiles",
+    "copilot"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YOUR_USERNAME/claude-profile-marketplace.git"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "archiver": "^6.0.1",
+    "chalk": "^5.3.0",
+    "commander": "^12.0.0",
+    "extract-zip": "^2.0.1",
+    "inquirer": "^9.2.12",
+    "node-fetch": "^3.3.2",
+    "ora": "^8.0.1"
+  }
+}
