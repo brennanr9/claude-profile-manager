@@ -10,11 +10,13 @@ import {
   getGitHubUsername,
   createProfilePR,
   fetchRepoIndex,
-  getCredentialSetupInstructions
+  getCredentialSetupInstructions,
+  authenticateWithDeviceFlow
 } from '../utils/auth.js';
 
 /**
  * Publish a local profile to the marketplace via a direct PR.
+ * Falls back to OAuth device flow if git credentials lack access.
  */
 export async function publishProfile(name, options) {
   const profilePath = getProfilePath(name);
@@ -46,23 +48,28 @@ export async function publishProfile(name, options) {
   console.log(chalk.dim('─'.repeat(50)));
   console.log('');
 
-  // Get GitHub token from Git Credential Manager
+  // --- Auth: try git credentials first, device flow as fallback ---
   const spinner = ora('Checking GitHub credentials...').start();
-  const token = getGitHubToken();
+  let token = getGitHubToken();
+  let useFork = false;
 
   if (!token) {
-    spinner.fail(chalk.red('Could not find cached GitHub credentials.'));
-    console.log(chalk.dim(getCredentialSetupInstructions()));
-    process.exit(1);
+    spinner.warn(chalk.yellow('No cached GitHub credentials found.'));
+    console.log(chalk.dim('  Falling back to browser authentication...'));
+    token = await authenticateWithDeviceFlow();
+    useFork = true;
+  } else {
+    spinner.succeed(chalk.green('Found GitHub credentials.'));
   }
 
-  // Get GitHub username from token
+  // Get GitHub username
   let author;
+  const userSpinner = ora('Verifying identity...').start();
   try {
     author = await getGitHubUsername(token);
-    spinner.succeed(chalk.green(`Authenticated as ${chalk.bold(author)}`));
+    userSpinner.succeed(chalk.green(`Authenticated as ${chalk.bold(author)}`));
   } catch (error) {
-    spinner.fail(chalk.red(error.message));
+    userSpinner.fail(chalk.red(error.message));
     process.exit(1);
   }
 
@@ -109,47 +116,20 @@ export async function publishProfile(name, options) {
   }
 
   const config = await getConfig();
+
+  // --- Publish with retry on 403 ---
+  await attemptPublish(token, config, { author, name, metadata, snapshotBuffer, useFork });
+}
+
+/**
+ * Attempt to publish. On 403 (insufficient token scope), fall back to
+ * OAuth device flow and retry with a fork-based PR.
+ */
+async function attemptPublish(token, config, { author, name, metadata, snapshotBuffer, useFork }) {
   const publishSpinner = ora('Creating pull request...').start();
 
   try {
-    // Fetch current index and prepare the updated version
-    publishSpinner.text = 'Fetching marketplace index...';
-    const index = await fetchRepoIndex(token, config.marketplaceRepo);
-
-    // Update metadata with author
-    const publishMetadata = {
-      ...metadata,
-      author,
-      publishedAt: new Date().toISOString()
-    };
-
-    // Update index: remove existing entry for this author/name, add new one
-    index.profiles = (index.profiles || []).filter(
-      p => !(p.author === author && p.name === name)
-    );
-    index.profiles.push({
-      name,
-      author,
-      version: publishMetadata.version || '1.0.0',
-      description: publishMetadata.description || '',
-      tags: publishMetadata.tags || [],
-      downloads: 0,
-      stars: 0,
-      createdAt: publishMetadata.publishedAt,
-      contents: publishMetadata.contents || {}
-    });
-    index.lastUpdated = new Date().toISOString();
-
-    // Create the PR
-    publishSpinner.text = 'Uploading profile and creating PR...';
-    const pr = await createProfilePR(token, config.marketplaceRepo, {
-      author,
-      name,
-      profileJson: JSON.stringify(publishMetadata, null, 2),
-      snapshotBuffer,
-      indexUpdate: JSON.stringify(index, null, 2)
-    });
-
+    const pr = await doPublish(token, config, { author, name, metadata, snapshotBuffer, useFork });
     publishSpinner.succeed(chalk.green('Pull request created!'));
     console.log('');
     console.log(chalk.cyan('  PR: ') + pr.html_url);
@@ -157,9 +137,76 @@ export async function publishProfile(name, options) {
     console.log(chalk.dim('A maintainer will review and merge your profile.'));
     console.log('');
   } catch (error) {
-    publishSpinner.fail(chalk.red(`Publish failed: ${error.message}`));
-    process.exit(1);
+    // If the error is a 403, the token lacks write access to the marketplace repo.
+    // Fall back to OAuth device flow + fork-based PR.
+    if (error.message.includes('403') && !useFork) {
+      publishSpinner.warn(chalk.yellow('Credentials lack write access to marketplace repo.'));
+      console.log(chalk.dim('  Falling back to browser authentication...'));
+      console.log('');
+
+      const deviceToken = await authenticateWithDeviceFlow();
+
+      const retrySpinner = ora('Retrying with fork-based PR...').start();
+      try {
+        const pr = await doPublish(deviceToken, config, { author, name, metadata, snapshotBuffer, useFork: true });
+        retrySpinner.succeed(chalk.green('Pull request created!'));
+        console.log('');
+        console.log(chalk.cyan('  PR: ') + pr.html_url);
+        console.log('');
+        console.log(chalk.dim('A maintainer will review and merge your profile.'));
+        console.log('');
+      } catch (retryError) {
+        retrySpinner.fail(chalk.red(`Publish failed: ${retryError.message}`));
+        process.exit(1);
+      }
+    } else {
+      publishSpinner.fail(chalk.red(`Publish failed: ${error.message}`));
+      process.exit(1);
+    }
   }
+}
+
+/**
+ * Core publish logic: fetch index, prepare metadata, create PR.
+ */
+async function doPublish(token, config, { author, name, metadata, snapshotBuffer, useFork }) {
+  // Fetch current index
+  const index = await fetchRepoIndex(token, config.marketplaceRepo);
+
+  // Update metadata with author
+  const publishMetadata = {
+    ...metadata,
+    author,
+    publishedAt: new Date().toISOString()
+  };
+
+  // Update index: remove existing entry for this author/name, add new one
+  index.profiles = (index.profiles || []).filter(
+    p => !(p.author === author && p.name === name)
+  );
+  index.profiles.push({
+    name,
+    author,
+    version: publishMetadata.version || '1.0.0',
+    description: publishMetadata.description || '',
+    tags: publishMetadata.tags || [],
+    downloads: 0,
+    stars: 0,
+    createdAt: publishMetadata.publishedAt,
+    contents: publishMetadata.contents || {}
+  });
+  index.lastUpdated = new Date().toISOString();
+
+  // Create the PR
+  const pr = await createProfilePR(token, config.marketplaceRepo, {
+    author,
+    name,
+    profileJson: JSON.stringify(publishMetadata, null, 2),
+    snapshotBuffer,
+    indexUpdate: JSON.stringify(index, null, 2)
+  }, { useFork });
+
+  return pr;
 }
 
 /**
