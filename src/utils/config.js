@@ -4,13 +4,32 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 
 const HOME = homedir();
 
+/**
+ * Find Claude directory - checks project root first (codespaces), then home
+ */
+function findClaudeDir() {
+  const candidates = [
+    join(process.cwd(), '.claude'),  // Project root (codespaces, dev environments)
+    join(HOME, '.claude'),           // Home directory (standard local install)
+  ];
+
+  for (const dir of candidates) {
+    if (existsSync(dir)) {
+      return dir;
+    }
+  }
+
+  // Default to home directory if not found
+  return join(HOME, '.claude');
+}
+
 // Default paths
 const DEFAULTS = {
-  claudeDir: join(HOME, '.claude'),
+  claudeDir: findClaudeDir(),
   profilesDir: join(HOME, '.claude-profiles'),
   cacheDir: join(HOME, '.claude-profiles', '.cache'),
   configFile: join(HOME, '.claude-profiles', 'config.json'),
-  marketplaceRepo: 'YOUR_USERNAME/claude-profile-marketplace'
+  marketplaceRepo: 'brennanr9/claude-profile-manager'
 };
 
 /**

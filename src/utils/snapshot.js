@@ -1,5 +1,5 @@
-import { createWriteStream, createReadStream, existsSync, mkdirSync, readdirSync, statSync, rmSync, cpSync, readFileSync, writeFileSync } from 'fs';
-import { join, basename, relative } from 'path';
+import { createWriteStream, createReadStream, existsSync, mkdirSync, readdirSync, statSync, rmSync, cpSync, readFileSync, writeFileSync, renameSync } from 'fs';
+import { join, basename, relative, sep } from 'path';
 import archiver from 'archiver';
 import extractZip from 'extract-zip';
 import { getConfig, DEFAULTS } from './config.js';
@@ -17,22 +17,25 @@ const DEFAULT_EXCLUDES = [
   '.git'
 ];
 
-// Files that are safe to include
+// Files that are safe to include (allowlist approach)
 const SAFE_INCLUDES = [
   'settings.json',
-  'settings.local.json', 
+  'settings.local.json',
   'CLAUDE.md',
+  'README.md',
+  'README',
   'commands',
   'commands/**',
-  'projects',
-  'projects/**',
   'templates',
   'templates/**',
   'hooks',
   'hooks/**',
+  'plugins',
+  'plugins/**',
   'mcp.json',
   'mcp_servers',
-  'mcp_servers/**'
+  'mcp_servers/**',
+  'keybindings.json'
 ];
 
 /**
@@ -107,26 +110,31 @@ export async function createSnapshot(profileName, options = {}) {
 }
 
 /**
- * Get list of files to archive (respecting excludes)
+ * Get list of files to archive (using allowlist approach)
  */
 function getFilesToArchive(dir, includeSecrets = false) {
   const files = [];
   const excludes = includeSecrets ? [] : DEFAULT_EXCLUDES;
-  
+
   function walk(currentDir, relativePath = '') {
     const entries = readdirSync(currentDir);
-    
+
     for (const entry of entries) {
       const fullPath = join(currentDir, entry);
       const relPath = relativePath ? join(relativePath, entry) : entry;
-      
-      // Check exclusions
+
+      // Check if this path is in the allowlist
+      if (!isAllowed(entry, relPath)) {
+        continue;
+      }
+
+      // Check exclusions (secrets, credentials)
       if (shouldExclude(entry, relPath, excludes)) {
         continue;
       }
-      
+
       const stat = statSync(fullPath);
-      
+
       if (stat.isDirectory()) {
         walk(fullPath, relPath);
       } else {
@@ -134,9 +142,32 @@ function getFilesToArchive(dir, includeSecrets = false) {
       }
     }
   }
-  
+
   walk(dir);
   return files;
+}
+
+/**
+ * Check if a file/folder is in the allowlist
+ */
+function isAllowed(name, path) {
+  // Normalize path separators to forward slashes for cross-platform matching
+  const normalizedPath = path.split(sep).join('/');
+
+  // Check against SAFE_INCLUDES patterns
+  for (const pattern of SAFE_INCLUDES) {
+    if (pattern.endsWith('/**')) {
+      // Directory with all contents
+      const dirName = pattern.slice(0, -3);
+      if (normalizedPath.startsWith(dirName + '/') || normalizedPath === dirName) {
+        return true;
+      }
+    } else if (name === pattern || normalizedPath === pattern) {
+      // Exact match
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -176,15 +207,29 @@ export async function extractSnapshot(profileName, options = {}) {
     const backupPath = join(DEFAULTS.profilesDir, backupName);
     cpSync(claudeDir, backupPath, { recursive: true });
   }
-  
+
   // Clear existing .claude directory (if force or confirmed)
   if (existsSync(claudeDir)) {
     if (!options.force) {
       throw new Error('Claude directory exists. Use --force to overwrite or --backup to save current config.');
     }
-    rmSync(claudeDir, { recursive: true, force: true });
+
+    // Use rename instead of rmSync to avoid permission issues with open file handles
+    // This works even if Claude Code is running
+    const tempName = `${claudeDir}-removing-${Date.now()}`;
+    try {
+      renameSync(claudeDir, tempName);
+      // Try to delete the renamed folder, but don't fail if it's locked
+      try {
+        rmSync(tempName, { recursive: true, force: true });
+      } catch (cleanupErr) {
+        // Folder will be cleaned up later or manually - not critical
+      }
+    } catch (err) {
+      throw new Error(`Cannot replace .claude folder. Please close Claude Code and try again.\n  ${err.message}`);
+    }
   }
-  
+
   // Create fresh .claude directory
   mkdirSync(claudeDir, { recursive: true });
   
@@ -212,15 +257,28 @@ export async function extractDownloadedSnapshot(zipBuffer, options = {}) {
       const backupPath = join(DEFAULTS.profilesDir, backupName);
       cpSync(claudeDir, backupPath, { recursive: true });
     }
-    
+
     // Clear existing .claude directory
     if (existsSync(claudeDir)) {
       if (!options.force) {
         throw new Error('Claude directory exists. Use --force to overwrite or --backup to save current config.');
       }
-      rmSync(claudeDir, { recursive: true, force: true });
+
+      // Use rename instead of rmSync to avoid permission issues with open file handles
+      const tempName = `${claudeDir}-removing-${Date.now()}`;
+      try {
+        renameSync(claudeDir, tempName);
+        // Try to delete the renamed folder, but don't fail if it's locked
+        try {
+          rmSync(tempName, { recursive: true, force: true });
+        } catch (cleanupErr) {
+          // Folder will be cleaned up later or manually - not critical
+        }
+      } catch (err) {
+        throw new Error(`Cannot replace .claude folder. Please close Claude Code and try again.\n  ${err.message}`);
+      }
     }
-    
+
     mkdirSync(claudeDir, { recursive: true });
     await extractZip(tempZip, { dir: claudeDir });
     
