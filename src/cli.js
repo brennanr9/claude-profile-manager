@@ -134,7 +134,6 @@ program
 program
   .command('publish <name>')
   .description('Publish a local profile to the marketplace')
-  .option('--public', 'Make the profile publicly visible')
   .action(async (name, options) => {
     await publishProfile(name, options);
   });

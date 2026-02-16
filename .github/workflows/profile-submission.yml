@@ -1,0 +1,281 @@
+name: Profile Submission
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  process-submission:
+    if: contains(github.event.issue.labels.*.name, 'profile-submission')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Process submission
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const issueBody = context.payload.issue.body;
+            const issueNumber = context.payload.issue.number;
+
+            // --- Parse issue body ---
+            function extractBlock(body, header) {
+              const regex = new RegExp(`### ${header}\\s*\\n\`\`\`[a-z]*\\n([\\s\\S]*?)\\n\`\`\``, 'm');
+              const match = body.match(regex);
+              return match ? match[1].trim() : null;
+            }
+
+            function extractField(body, field) {
+              const regex = new RegExp(`\\*\\*${field}:\\*\\*\\s*(.+)`, 'm');
+              const match = body.match(regex);
+              return match ? match[1].trim() : null;
+            }
+
+            const author = extractField(issueBody, 'Author');
+            const name = extractField(issueBody, 'Name');
+            const version = extractField(issueBody, 'Version');
+            const metadataJson = extractBlock(issueBody, 'Metadata');
+            const snapshotBase64 = extractBlock(issueBody, 'Snapshot');
+
+            // --- Validate ---
+            const errors = [];
+
+            if (!author) errors.push('Missing author');
+            if (!name) errors.push('Missing name');
+            if (!version) errors.push('Missing version');
+            if (!metadataJson) errors.push('Missing metadata block');
+            if (!snapshotBase64) errors.push('Missing snapshot block');
+
+            if (name && !/^[a-z0-9][a-z0-9-_]*$/.test(name)) {
+              errors.push(`Invalid profile name: ${name}`);
+            }
+
+            let metadata;
+            if (metadataJson) {
+              try {
+                metadata = JSON.parse(metadataJson);
+              } catch (e) {
+                errors.push(`Invalid metadata JSON: ${e.message}`);
+              }
+            }
+
+            if (metadata) {
+              const contents = metadata.contents || {};
+              const hasContent = Object.values(contents).some(items => Array.isArray(items) && items.length > 0);
+              if (!hasContent) {
+                errors.push('Profile has no functional content (commands, hooks, skills, etc.)');
+              }
+
+              // Check for disallowed paths in files list
+              const allowedPrefixes = ['CLAUDE.md', 'commands/', 'skills/', 'hooks/', 'plugins/', 'mcp.json', 'mcp_servers/', 'agents/'];
+              for (const file of (metadata.files || [])) {
+                const normalized = file.replace(/\\/g, '/');
+                const allowed = allowedPrefixes.some(prefix => normalized === prefix || normalized.startsWith(prefix));
+                if (!allowed) {
+                  errors.push(`Disallowed file path: ${file}`);
+                }
+              }
+            }
+
+            // Validate snapshot decodes
+            let snapshotBuffer;
+            if (snapshotBase64) {
+              try {
+                snapshotBuffer = Buffer.from(snapshotBase64, 'base64');
+                // Check ZIP magic bytes (PK\x03\x04)
+                if (snapshotBuffer.length < 4 || snapshotBuffer[0] !== 0x50 || snapshotBuffer[1] !== 0x4B) {
+                  errors.push('Snapshot is not a valid ZIP file');
+                }
+              } catch (e) {
+                errors.push(`Invalid base64 snapshot: ${e.message}`);
+              }
+            }
+
+            // Check if profile already exists
+            const profileDir = `profiles/${author}/${name}`;
+            if (fs.existsSync(profileDir)) {
+              const existingMeta = JSON.parse(fs.readFileSync(`${profileDir}/profile.json`, 'utf-8'));
+              if (existingMeta.version === version) {
+                errors.push(`Profile ${author}/${name} already exists at version ${version}. Bump the version to update.`);
+              }
+            }
+
+            // --- Report errors ---
+            if (errors.length > 0) {
+              const errorMsg = [
+                '## Submission Failed',
+                '',
+                'The following validation errors were found:',
+                '',
+                ...errors.map(e => `- ${e}`),
+                '',
+                'Please fix these issues and submit again.'
+              ].join('\n');
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: errorMsg
+              });
+
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                labels: ['invalid']
+              });
+
+              return;
+            }
+
+            // --- Create branch and PR ---
+            const branchName = `profile-submission/${author}/${name}`;
+
+            // Get main branch SHA
+            const { data: ref } = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'heads/main'
+            });
+
+            // Create branch
+            try {
+              await github.rest.git.createRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `refs/heads/${branchName}`,
+                sha: ref.object.sha
+              });
+            } catch (e) {
+              // Branch may already exist from a previous attempt — delete and recreate
+              if (e.status === 422) {
+                await github.rest.git.deleteRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `heads/${branchName}`
+                });
+                await github.rest.git.createRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `refs/heads/${branchName}`,
+                  sha: ref.object.sha
+                });
+              } else {
+                throw e;
+              }
+            }
+
+            // Write profile.json
+            const profileJsonContent = JSON.stringify(metadata, null, 2);
+            await github.rest.repos.createOrUpdateFileContents({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: `${profileDir}/profile.json`,
+              message: `Add profile metadata: ${author}/${name}`,
+              content: Buffer.from(profileJsonContent).toString('base64'),
+              branch: branchName
+            });
+
+            // Write snapshot.zip
+            await github.rest.repos.createOrUpdateFileContents({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: `${profileDir}/snapshot.zip`,
+              message: `Add profile snapshot: ${author}/${name}`,
+              content: snapshotBase64,
+              branch: branchName
+            });
+
+            // Update index.json
+            const { data: indexFile } = await github.rest.repos.getContent({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: 'index.json',
+              ref: branchName
+            });
+
+            const indexContent = JSON.parse(Buffer.from(indexFile.content, 'base64').toString('utf-8'));
+
+            // Remove existing entry for this author/name if present
+            indexContent.profiles = (indexContent.profiles || []).filter(
+              p => !(p.author === author && p.name === name)
+            );
+
+            // Add new entry
+            indexContent.profiles.push({
+              name,
+              author,
+              version: metadata.version || '1.0.0',
+              description: metadata.description || '',
+              tags: metadata.tags || [],
+              downloads: 0,
+              stars: 0,
+              createdAt: metadata.publishedAt || new Date().toISOString(),
+              contents: metadata.contents || {}
+            });
+
+            indexContent.lastUpdated = new Date().toISOString();
+
+            await github.rest.repos.createOrUpdateFileContents({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: 'index.json',
+              message: `Update index: add ${author}/${name}`,
+              content: Buffer.from(JSON.stringify(indexContent, null, 2)).toString('base64'),
+              sha: indexFile.sha,
+              branch: branchName
+            });
+
+            // Create PR
+            const { data: pr } = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Add profile: ${author}/${name}`,
+              body: [
+                `## Profile Submission`,
+                '',
+                `Adds profile **${author}/${name}** v${version}`,
+                '',
+                `**Description:** ${metadata.description || 'No description'}`,
+                '',
+                `**Contents:**`,
+                ...Object.entries(metadata.contents || {}).map(([cat, items]) => `- ${cat}: ${items.join(', ')}`),
+                '',
+                `Closes #${issueNumber}`
+              ].join('\n'),
+              head: branchName,
+              base: 'main',
+              labels: ['profile-submission']
+            });
+
+            // Comment on issue with PR link
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: `## Submission Accepted\n\nA pull request has been created: ${pr.html_url}\n\nA maintainer will review and merge it shortly.`
+            });
+
+            // Close the issue
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              state: 'closed'
+            });
+
+            console.log(`PR created: ${pr.html_url}`);
