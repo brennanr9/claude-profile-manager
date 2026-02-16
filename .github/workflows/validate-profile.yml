@@ -1,0 +1,194 @@
+name: Validate Profile Submission
+
+on:
+  pull_request:
+    paths:
+      - 'profiles/**'
+      - 'index.json'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Validate profile submission
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const errors = [];
+            const warnings = [];
+
+            // Get changed files in this PR
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number
+            });
+
+            const changedPaths = files.map(f => f.filename);
+
+            // Find profile directories being added/modified
+            const profilePaths = new Set();
+            for (const p of changedPaths) {
+              const match = p.match(/^profiles\/([^/]+)\/([^/]+)\//);
+              if (match) {
+                profilePaths.add(`profiles/${match[1]}/${match[2]}`);
+              }
+            }
+
+            if (profilePaths.size === 0) {
+              console.log('No profile directories changed, skipping validation.');
+              return;
+            }
+
+            // Allowed file prefixes inside a profile snapshot
+            const allowedPrefixes = [
+              'CLAUDE.md',
+              'commands/',
+              'skills/',
+              'hooks/',
+              'plugins/',
+              'mcp.json',
+              'mcp_servers/',
+              'agents/'
+            ];
+
+            for (const profileDir of profilePaths) {
+              const metadataPath = `${profileDir}/profile.json`;
+              const snapshotPath = `${profileDir}/snapshot.zip`;
+
+              // Check profile.json exists
+              if (!fs.existsSync(metadataPath)) {
+                errors.push(`Missing profile.json in ${profileDir}`);
+                continue;
+              }
+
+              // Check snapshot.zip exists
+              if (!fs.existsSync(snapshotPath)) {
+                errors.push(`Missing snapshot.zip in ${profileDir}`);
+              }
+
+              // Validate profile.json
+              let metadata;
+              try {
+                metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+              } catch (e) {
+                errors.push(`Invalid JSON in ${metadataPath}: ${e.message}`);
+                continue;
+              }
+
+              // Required fields
+              if (!metadata.name) errors.push(`${metadataPath}: missing "name" field`);
+              if (!metadata.author) errors.push(`${metadataPath}: missing "author" field`);
+              if (!metadata.version) errors.push(`${metadataPath}: missing "version" field`);
+
+              // Name format
+              if (metadata.name && !/^[a-z0-9][a-z0-9-_]*$/.test(metadata.name)) {
+                errors.push(`${metadataPath}: invalid name "${metadata.name}" (use lowercase alphanumeric, hyphens, underscores)`);
+              }
+
+              // Version format (loose semver)
+              if (metadata.version && !/^\d+\.\d+\.\d+/.test(metadata.version)) {
+                errors.push(`${metadataPath}: invalid version "${metadata.version}" (use semver: x.y.z)`);
+              }
+
+              // Contents check
+              const contents = metadata.contents || {};
+              const hasContent = Object.values(contents).some(
+                items => Array.isArray(items) && items.length > 0
+              );
+              if (!hasContent) {
+                errors.push(`${metadataPath}: profile has no functional content (commands, hooks, skills, etc.)`);
+              }
+
+              // Validate files list against allowlist
+              for (const file of (metadata.files || [])) {
+                const normalized = file.replace(/\\/g, '/');
+                const allowed = allowedPrefixes.some(
+                  prefix => normalized === prefix || normalized.startsWith(prefix)
+                );
+                if (!allowed) {
+                  errors.push(`${metadataPath}: disallowed file path "${file}"`);
+                }
+              }
+
+              // Check snapshot is a valid zip (magic bytes)
+              if (fs.existsSync(snapshotPath)) {
+                const buf = fs.readFileSync(snapshotPath);
+                if (buf.length < 4 || buf[0] !== 0x50 || buf[1] !== 0x4B) {
+                  errors.push(`${snapshotPath}: not a valid ZIP file`);
+                }
+              }
+            }
+
+            // Validate index.json if changed
+            if (changedPaths.includes('index.json')) {
+              try {
+                const index = JSON.parse(fs.readFileSync('index.json', 'utf-8'));
+                if (!Array.isArray(index.profiles)) {
+                  errors.push('index.json: "profiles" must be an array');
+                } else {
+                  for (const profile of index.profiles) {
+                    if (!profile.name || !profile.author) {
+                      errors.push(`index.json: profile entry missing name or author`);
+                    }
+                    if (!profile.contents || Object.keys(profile.contents).length === 0) {
+                      warnings.push(`index.json: profile ${profile.author}/${profile.name} has no contents field`);
+                    }
+                  }
+                }
+              } catch (e) {
+                errors.push(`index.json: invalid JSON — ${e.message}`);
+              }
+            }
+
+            // Report results
+            if (warnings.length > 0) {
+              console.log('Warnings:');
+              for (const w of warnings) console.log(`  ⚠ ${w}`);
+            }
+
+            if (errors.length > 0) {
+              console.log('Validation errors:');
+              for (const e of errors) console.log(`  ✗ ${e}`);
+
+              // Post a comment on the PR
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: [
+                  '## Profile Validation Failed',
+                  '',
+                  ...errors.map(e => `- ✗ ${e}`),
+                  ...(warnings.length > 0 ? ['', '**Warnings:**', ...warnings.map(w => `- ⚠ ${w}`)] : []),
+                  '',
+                  'Please fix these issues and push again.'
+                ].join('\n')
+              });
+
+              core.setFailed(`Validation failed with ${errors.length} error(s)`);
+            } else {
+              console.log('✓ All profile validations passed');
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: [
+                  '## Profile Validation Passed ✓',
+                  '',
+                  ...(warnings.length > 0 ? ['**Warnings:**', ...warnings.map(w => `- ⚠ ${w}`), ''] : []),
+                  'Ready for maintainer review.'
+                ].join('\n')
+              });
+            }

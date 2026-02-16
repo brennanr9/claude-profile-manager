@@ -1,11 +1,24 @@
 import { execSync } from 'child_process';
 
+const GITHUB_API = 'https://api.github.com';
+const HEADERS_BASE = {
+  'Accept': 'application/vnd.github+json',
+  'User-Agent': 'claude-profile-manager'
+};
+
+function authHeaders(token) {
+  return { ...HEADERS_BASE, 'Authorization': `Bearer ${token}` };
+}
+
+async function getFetch() {
+  const { default: fetch } = await import('node-fetch');
+  return fetch;
+}
+
 /**
  * Retrieve a GitHub token from Git Credential Manager.
  * Works cross-platform (Windows, macOS, Linux) — delegates to
  * whatever credential helper is configured for git.
- *
- * Returns the token string, or null if no credentials are cached.
  */
 export function getGitHubToken() {
   try {
@@ -33,14 +46,10 @@ export function getGitHubToken() {
  * Get the GitHub username associated with a token.
  */
 export async function getGitHubUsername(token) {
-  const { default: fetch } = await import('node-fetch');
+  const fetch = await getFetch();
 
-  const response = await fetch('https://api.github.com/user', {
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Accept': 'application/vnd.github+json',
-      'User-Agent': 'claude-profile-manager'
-    }
+  const response = await fetch(`${GITHUB_API}/user`, {
+    headers: authHeaders(token)
   });
 
   if (!response.ok) {
@@ -55,34 +64,157 @@ export async function getGitHubUsername(token) {
 }
 
 /**
- * Create a GitHub issue on the marketplace repo.
+ * Create a pull request on the marketplace repo with profile files.
+ *
+ * Uses the Git Data API (blobs → tree → commit → ref → PR) to support
+ * files of any size without the 64KB issue body limit.
  */
-export async function createGitHubIssue(token, repo, title, body, labels = []) {
-  const { default: fetch } = await import('node-fetch');
+export async function createProfilePR(token, repo, { author, name, profileJson, snapshotBuffer, indexUpdate }) {
+  const fetch = await getFetch();
+  const headers = { ...authHeaders(token), 'Content-Type': 'application/json' };
 
-  const response = await fetch(`https://api.github.com/repos/${repo}/issues`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Accept': 'application/vnd.github+json',
-      'Content-Type': 'application/json',
-      'User-Agent': 'claude-profile-manager'
-    },
-    body: JSON.stringify({ title, body, labels })
+  async function api(method, path, body) {
+    const response = await fetch(`${GITHUB_API}/repos/${repo}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`GitHub API ${method} ${path} failed (${response.status}): ${errorData.message || 'Unknown error'}`);
+    }
+
+    return response.json();
+  }
+
+  // 1. Get the SHA of the main branch
+  const mainRef = await api('GET', '/git/ref/heads/main');
+  const baseSha = mainRef.object.sha;
+
+  // 2. Get the base commit's tree
+  const baseCommit = await api('GET', `/git/commits/${baseSha}`);
+  const baseTreeSha = baseCommit.tree.sha;
+
+  // 3. Create blobs for profile.json and snapshot.zip
+  const profileBlob = await api('POST', '/git/blobs', {
+    content: Buffer.from(profileJson).toString('base64'),
+    encoding: 'base64'
+  });
+
+  const snapshotBlob = await api('POST', '/git/blobs', {
+    content: snapshotBuffer.toString('base64'),
+    encoding: 'base64'
+  });
+
+  const indexBlob = await api('POST', '/git/blobs', {
+    content: Buffer.from(indexUpdate).toString('base64'),
+    encoding: 'base64'
+  });
+
+  // 4. Create a new tree with the profile files + updated index
+  const tree = await api('POST', '/git/trees', {
+    base_tree: baseTreeSha,
+    tree: [
+      {
+        path: `profiles/${author}/${name}/profile.json`,
+        mode: '100644',
+        type: 'blob',
+        sha: profileBlob.sha
+      },
+      {
+        path: `profiles/${author}/${name}/snapshot.zip`,
+        mode: '100644',
+        type: 'blob',
+        sha: snapshotBlob.sha
+      },
+      {
+        path: 'index.json',
+        mode: '100644',
+        type: 'blob',
+        sha: indexBlob.sha
+      }
+    ]
+  });
+
+  // 5. Create a commit
+  const commit = await api('POST', '/git/commits', {
+    message: `Add profile: ${author}/${name}`,
+    tree: tree.sha,
+    parents: [baseSha]
+  });
+
+  // 6. Create a branch
+  const branchName = `profile-submission/${author}/${name}`;
+  try {
+    await api('POST', '/git/refs', {
+      ref: `refs/heads/${branchName}`,
+      sha: commit.sha
+    });
+  } catch (e) {
+    // Branch exists from a previous attempt — force update it
+    if (e.message.includes('422')) {
+      await api('PATCH', `/git/refs/heads/${branchName}`, {
+        sha: commit.sha,
+        force: true
+      });
+    } else {
+      throw e;
+    }
+  }
+
+  // 7. Create the pull request
+  const pr = await api('POST', '/pulls', {
+    title: `Add profile: ${author}/${name}`,
+    body: buildPRBody(author, name, JSON.parse(profileJson)),
+    head: branchName,
+    base: 'main'
+  });
+
+  return pr;
+}
+
+/**
+ * Fetch the current index.json from the repo.
+ */
+export async function fetchRepoIndex(token, repo) {
+  const fetch = await getFetch();
+
+  const response = await fetch(`${GITHUB_API}/repos/${repo}/contents/index.json`, {
+    headers: authHeaders(token)
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    if (response.status === 403) {
-      throw new Error('Token does not have permission to create issues. You may need a token with public_repo scope.');
-    }
-    if (response.status === 404) {
-      throw new Error(`Marketplace repo not found: ${repo}`);
-    }
-    throw new Error(`GitHub API error ${response.status}: ${errorData.message || 'Unknown error'}`);
+    throw new Error(`Failed to fetch index.json: ${response.status}`);
   }
 
-  return await response.json();
+  const data = await response.json();
+  return JSON.parse(Buffer.from(data.content, 'base64').toString('utf-8'));
+}
+
+function buildPRBody(author, name, metadata) {
+  const lines = [
+    `## Profile Submission`,
+    '',
+    `Adds profile **${author}/${name}** v${metadata.version || '1.0.0'}`,
+    '',
+    `**Description:** ${metadata.description || 'No description'}`,
+    ''
+  ];
+
+  const contents = metadata.contents || {};
+  if (Object.keys(contents).length > 0) {
+    lines.push('**Contents:**');
+    for (const [cat, items] of Object.entries(contents)) {
+      if (items && items.length > 0) {
+        const display = cat === 'commands' ? items.map(i => `/${i}`).join(', ') : items.join(', ');
+        lines.push(`- ${cat}: ${display}`);
+      }
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
 }
 
 /**

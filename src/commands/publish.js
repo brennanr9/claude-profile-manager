@@ -8,37 +8,13 @@ import { readProfileMetadata } from '../utils/snapshot.js';
 import {
   getGitHubToken,
   getGitHubUsername,
-  createGitHubIssue,
+  createProfilePR,
+  fetchRepoIndex,
   getCredentialSetupInstructions
 } from '../utils/auth.js';
 
-const MAX_ISSUE_BODY_LENGTH = 65535;
-
 /**
- * Build the GitHub issue body for a profile submission.
- */
-function buildIssueBody(author, name, metadata, snapshotBase64) {
-  return [
-    '## Profile Submission',
-    '',
-    `**Author:** ${author}`,
-    `**Name:** ${name}`,
-    `**Version:** ${metadata.version || '1.0.0'}`,
-    '',
-    '### Metadata',
-    '```json',
-    JSON.stringify(metadata, null, 2),
-    '```',
-    '',
-    '### Snapshot',
-    '```',
-    snapshotBase64,
-    '```'
-  ].join('\n');
-}
-
-/**
- * Publish a local profile to the marketplace via GitHub Issues.
+ * Publish a local profile to the marketplace via a direct PR.
  */
 export async function publishProfile(name, options) {
   const profilePath = getProfilePath(name);
@@ -98,12 +74,12 @@ export async function publishProfile(name, options) {
   }
 
   const snapshotBuffer = readFileSync(snapshotPath);
-  const snapshotBase64 = snapshotBuffer.toString('base64');
 
   // Show profile summary
   console.log('');
   console.log(chalk.cyan('  Name:    ') + name);
   console.log(chalk.cyan('  Version: ') + (metadata.version || '1.0.0'));
+  console.log(chalk.cyan('  Size:    ') + `${(snapshotBuffer.length / 1024).toFixed(1)}KB`);
   if (metadata.description) {
     console.log(chalk.cyan('  Desc:    ') + metadata.description);
   }
@@ -119,23 +95,6 @@ export async function publishProfile(name, options) {
   }
   console.log('');
 
-  // Update metadata with author
-  const publishMetadata = {
-    ...metadata,
-    author,
-    publishedAt: new Date().toISOString()
-  };
-
-  // Build issue body and check size
-  const issueBody = buildIssueBody(author, name, publishMetadata, snapshotBase64);
-
-  if (issueBody.length > MAX_ISSUE_BODY_LENGTH) {
-    console.log(chalk.red('✗ Profile is too large to publish via GitHub Issues.'));
-    console.log(chalk.dim(`  Payload: ${(issueBody.length / 1024).toFixed(0)}KB (max ~64KB)`));
-    console.log(chalk.dim('  Try removing unnecessary files from the profile.'));
-    process.exit(1);
-  }
-
   // Confirm
   const { confirm } = await inquirer.prompt([{
     type: 'confirm',
@@ -149,27 +108,56 @@ export async function publishProfile(name, options) {
     process.exit(0);
   }
 
-  // Create the issue
   const config = await getConfig();
-  const publishSpinner = ora('Submitting profile to marketplace...').start();
+  const publishSpinner = ora('Creating pull request...').start();
 
   try {
-    const issue = await createGitHubIssue(
-      token,
-      config.marketplaceRepo,
-      `[profile-submission] ${author}/${name}`,
-      issueBody,
-      ['profile-submission']
-    );
+    // Fetch current index and prepare the updated version
+    publishSpinner.text = 'Fetching marketplace index...';
+    const index = await fetchRepoIndex(token, config.marketplaceRepo);
 
-    publishSpinner.succeed(chalk.green('Submission created!'));
+    // Update metadata with author
+    const publishMetadata = {
+      ...metadata,
+      author,
+      publishedAt: new Date().toISOString()
+    };
+
+    // Update index: remove existing entry for this author/name, add new one
+    index.profiles = (index.profiles || []).filter(
+      p => !(p.author === author && p.name === name)
+    );
+    index.profiles.push({
+      name,
+      author,
+      version: publishMetadata.version || '1.0.0',
+      description: publishMetadata.description || '',
+      tags: publishMetadata.tags || [],
+      downloads: 0,
+      stars: 0,
+      createdAt: publishMetadata.publishedAt,
+      contents: publishMetadata.contents || {}
+    });
+    index.lastUpdated = new Date().toISOString();
+
+    // Create the PR
+    publishSpinner.text = 'Uploading profile and creating PR...';
+    const pr = await createProfilePR(token, config.marketplaceRepo, {
+      author,
+      name,
+      profileJson: JSON.stringify(publishMetadata, null, 2),
+      snapshotBuffer,
+      indexUpdate: JSON.stringify(index, null, 2)
+    });
+
+    publishSpinner.succeed(chalk.green('Pull request created!'));
     console.log('');
-    console.log(chalk.cyan('  Issue: ') + issue.html_url);
+    console.log(chalk.cyan('  PR: ') + pr.html_url);
     console.log('');
-    console.log(chalk.dim('A maintainer will review your profile. You\'ll be notified when the PR is ready.'));
+    console.log(chalk.dim('A maintainer will review and merge your profile.'));
     console.log('');
   } catch (error) {
-    publishSpinner.fail(chalk.red(`Submission failed: ${error.message}`));
+    publishSpinner.fail(chalk.red(`Publish failed: ${error.message}`));
     process.exit(1);
   }
 }
