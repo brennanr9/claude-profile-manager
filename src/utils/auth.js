@@ -223,7 +223,7 @@ async function ensureFork(token, upstreamRepo) {
  * Uses the Git Data API (blobs -> tree -> commit -> ref -> PR).
  * If `forkRepo` is provided, writes to the fork and opens a cross-repo PR.
  */
-export async function createProfilePR(token, repo, { author, name, profileJson, snapshotBuffer, indexUpdate }, { useFork = false } = {}) {
+export async function createProfilePR(token, repo, { author, name, profileJson, profileFiles, indexUpdate }, { useFork = false } = {}) {
   const fetch = await getFetch();
   const targetRepo = useFork ? await ensureFork(token, repo) : repo;
   const headers = { ...authHeaders(token), 'Content-Type': 'application/json' };
@@ -251,45 +251,51 @@ export async function createProfilePR(token, repo, { author, name, profileJson, 
   const baseCommit = await api('GET', `/git/commits/${baseSha}`, null, repo);
   const baseTreeSha = baseCommit.tree.sha;
 
-  // 3. Create blobs on the target repo (fork or upstream)
+  // 3. Create blobs for each profile file
+  const treeEntries = [];
+
+  // profile.json blob
   const profileBlob = await api('POST', '/git/blobs', {
     content: Buffer.from(profileJson).toString('base64'),
     encoding: 'base64'
   });
-
-  const snapshotBlob = await api('POST', '/git/blobs', {
-    content: snapshotBuffer.toString('base64'),
-    encoding: 'base64'
+  treeEntries.push({
+    path: `profiles/${author}/${name}/profile.json`,
+    mode: '100644',
+    type: 'blob',
+    sha: profileBlob.sha
   });
 
+  // Individual profile files (commands, hooks, skills, CLAUDE.md, etc.)
+  for (const file of profileFiles) {
+    const blob = await api('POST', '/git/blobs', {
+      content: Buffer.from(file.content).toString('base64'),
+      encoding: 'base64'
+    });
+    treeEntries.push({
+      path: `profiles/${author}/${name}/${file.path}`,
+      mode: '100644',
+      type: 'blob',
+      sha: blob.sha
+    });
+  }
+
+  // index.json blob
   const indexBlob = await api('POST', '/git/blobs', {
     content: Buffer.from(indexUpdate).toString('base64'),
     encoding: 'base64'
   });
+  treeEntries.push({
+    path: 'index.json',
+    mode: '100644',
+    type: 'blob',
+    sha: indexBlob.sha
+  });
 
-  // 4. Create a new tree with the profile files + updated index
+  // 4. Create a new tree with all profile files + updated index
   const tree = await api('POST', '/git/trees', {
     base_tree: baseTreeSha,
-    tree: [
-      {
-        path: `profiles/${author}/${name}/profile.json`,
-        mode: '100644',
-        type: 'blob',
-        sha: profileBlob.sha
-      },
-      {
-        path: `profiles/${author}/${name}/snapshot.zip`,
-        mode: '100644',
-        type: 'blob',
-        sha: snapshotBlob.sha
-      },
-      {
-        path: 'index.json',
-        mode: '100644',
-        type: 'blob',
-        sha: indexBlob.sha
-      }
-    ]
+    tree: treeEntries
   });
 
   // 5. Create a commit

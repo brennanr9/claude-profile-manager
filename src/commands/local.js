@@ -72,15 +72,25 @@ export async function saveProfile(name, options) {
   try {
     const result = await createSnapshot(name, options);
     spinner.succeed(chalk.green(`Profile saved: ${chalk.bold(name)}`));
-    
+
     console.log('');
     console.log(chalk.dim('  Location: ') + result.profileDir);
-    console.log(chalk.dim('  Files:    ') + result.metadata.files.length);
-    
+
     if (options.description) {
       console.log(chalk.dim('  Desc:     ') + options.description);
     }
-    
+
+    // Show contents summary
+    const contents = getContents(result.metadata);
+    const contentsLines = formatContentsLines(contents, '  ');
+    if (contentsLines.length > 0) {
+      for (const line of contentsLines) {
+        console.log(line);
+      }
+    } else {
+      console.log(chalk.dim('  Files:    ') + result.metadata.files.length);
+    }
+
     console.log('');
     console.log(chalk.dim('Load this profile anytime with:'));
     console.log(chalk.cyan(`  cpm load ${name}`));

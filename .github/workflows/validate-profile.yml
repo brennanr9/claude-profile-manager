@@ -56,7 +56,7 @@ jobs:
               return;
             }
 
-            // Allowed file prefixes inside a profile snapshot
+            // Allowed file prefixes inside a profile directory (besides profile.json)
             const allowedPrefixes = [
               'CLAUDE.md',
               'commands/',
@@ -70,17 +70,11 @@ jobs:
 
             for (const profileDir of profilePaths) {
               const metadataPath = `${profileDir}/profile.json`;
-              const snapshotPath = `${profileDir}/snapshot.zip`;
 
               // Check profile.json exists
               if (!fs.existsSync(metadataPath)) {
                 errors.push(`Missing profile.json in ${profileDir}`);
                 continue;
-              }
-
-              // Check snapshot.zip exists
-              if (!fs.existsSync(snapshotPath)) {
-                errors.push(`Missing snapshot.zip in ${profileDir}`);
               }
 
               // Validate profile.json
@@ -116,22 +110,35 @@ jobs:
                 errors.push(`${metadataPath}: profile has no functional content (commands, hooks, skills, etc.)`);
               }
 
-              // Validate files list against allowlist
-              for (const file of (metadata.files || [])) {
-                const normalized = file.replace(/\\/g, '/');
+              // Validate actual files in the profile directory against the allowlist
+              const profileFiles = changedPaths
+                .filter(p => p.startsWith(profileDir + '/') && p !== metadataPath)
+                .map(p => p.slice(profileDir.length + 1));
+
+              for (const file of profileFiles) {
                 const allowed = allowedPrefixes.some(
-                  prefix => normalized === prefix || normalized.startsWith(prefix)
+                  prefix => file === prefix || file.startsWith(prefix)
                 );
                 if (!allowed) {
-                  errors.push(`${metadataPath}: disallowed file path "${file}"`);
+                  errors.push(`${profileDir}/${file}: file not in allowlist (only CLAUDE.md, commands/, skills/, hooks/, plugins/, mcp.json, mcp_servers/, agents/ are allowed)`);
                 }
               }
 
-              // Check snapshot is a valid zip (magic bytes)
-              if (fs.existsSync(snapshotPath)) {
-                const buf = fs.readFileSync(snapshotPath);
-                if (buf.length < 4 || buf[0] !== 0x50 || buf[1] !== 0x4B) {
-                  errors.push(`${snapshotPath}: not a valid ZIP file`);
+              // Validate files list in metadata matches actual files
+              if (metadata.files && metadata.files.length > 0) {
+                for (const file of metadata.files) {
+                  const normalized = file.replace(/\\/g, '/');
+                  const allowed = allowedPrefixes.some(
+                    prefix => normalized === prefix || normalized.startsWith(prefix)
+                  );
+                  if (!allowed) {
+                    errors.push(`${metadataPath}: disallowed file path "${file}" in files list`);
+                  }
+                  // Check the file actually exists in the profile directory
+                  const filePath = `${profileDir}/${normalized}`;
+                  if (!fs.existsSync(filePath)) {
+                    errors.push(`${metadataPath}: file "${file}" listed in metadata but not found in profile directory`);
+                  }
                 }
               }
             }

@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import inquirer from 'inquirer';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { getConfig, updateConfig, getProfilePath } from '../utils/config.js';
 import { readProfileMetadata } from '../utils/snapshot.js';
@@ -73,20 +73,11 @@ export async function publishProfile(name, options) {
     process.exit(1);
   }
 
-  // Read snapshot
-  const snapshotPath = join(profilePath, 'snapshot.zip');
-  if (!existsSync(snapshotPath)) {
-    console.log(chalk.red('✗ Profile snapshot not found.'));
-    process.exit(1);
-  }
-
-  const snapshotBuffer = readFileSync(snapshotPath);
-
   // Show profile summary
   console.log('');
   console.log(chalk.cyan('  Name:    ') + name);
   console.log(chalk.cyan('  Version: ') + (metadata.version || '1.0.0'));
-  console.log(chalk.cyan('  Size:    ') + `${(snapshotBuffer.length / 1024).toFixed(1)}KB`);
+  console.log(chalk.cyan('  Files:   ') + (metadata.files || []).length);
   if (metadata.description) {
     console.log(chalk.cyan('  Desc:    ') + metadata.description);
   }
@@ -118,18 +109,18 @@ export async function publishProfile(name, options) {
   const config = await getConfig();
 
   // --- Publish with retry on 403 ---
-  await attemptPublish(token, config, { author, name, metadata, snapshotBuffer, useFork });
+  await attemptPublish(token, config, { author, name, metadata, profilePath, useFork });
 }
 
 /**
  * Attempt to publish. On 403 (insufficient token scope), fall back to
  * OAuth device flow and retry with a fork-based PR.
  */
-async function attemptPublish(token, config, { author, name, metadata, snapshotBuffer, useFork }) {
+async function attemptPublish(token, config, { author, name, metadata, profilePath, useFork }) {
   const publishSpinner = ora('Creating pull request...').start();
 
   try {
-    const pr = await doPublish(token, config, { author, name, metadata, snapshotBuffer, useFork });
+    const pr = await doPublish(token, config, { author, name, metadata, profilePath, useFork });
     publishSpinner.succeed(chalk.green('Pull request created!'));
     console.log('');
     console.log(chalk.cyan('  PR: ') + pr.html_url);
@@ -137,8 +128,6 @@ async function attemptPublish(token, config, { author, name, metadata, snapshotB
     console.log(chalk.dim('A maintainer will review and merge your profile.'));
     console.log('');
   } catch (error) {
-    // If the error is a 403, the token lacks write access to the marketplace repo.
-    // Fall back to OAuth device flow + fork-based PR.
     if (error.message.includes('403') && !useFork) {
       publishSpinner.warn(chalk.yellow('Credentials lack write access to marketplace repo.'));
       console.log(chalk.dim('  Falling back to browser authentication...'));
@@ -148,7 +137,7 @@ async function attemptPublish(token, config, { author, name, metadata, snapshotB
 
       const retrySpinner = ora('Retrying with fork-based PR...').start();
       try {
-        const pr = await doPublish(deviceToken, config, { author, name, metadata, snapshotBuffer, useFork: true });
+        const pr = await doPublish(deviceToken, config, { author, name, metadata, profilePath, useFork: true });
         retrySpinner.succeed(chalk.green('Pull request created!'));
         console.log('');
         console.log(chalk.cyan('  PR: ') + pr.html_url);
@@ -169,7 +158,7 @@ async function attemptPublish(token, config, { author, name, metadata, snapshotB
 /**
  * Core publish logic: fetch index, prepare metadata, create PR.
  */
-async function doPublish(token, config, { author, name, metadata, snapshotBuffer, useFork }) {
+async function doPublish(token, config, { author, name, metadata, profilePath, useFork }) {
   // Fetch current index
   const index = await fetchRepoIndex(token, config.marketplaceRepo);
 
@@ -197,16 +186,47 @@ async function doPublish(token, config, { author, name, metadata, snapshotBuffer
   });
   index.lastUpdated = new Date().toISOString();
 
+  // Read all profile files (excluding profile.json)
+  const profileFiles = readProfileFiles(profilePath);
+
   // Create the PR
   const pr = await createProfilePR(token, config.marketplaceRepo, {
     author,
     name,
     profileJson: JSON.stringify(publishMetadata, null, 2),
-    snapshotBuffer,
+    profileFiles,
     indexUpdate: JSON.stringify(index, null, 2)
   }, { useFork });
 
   return pr;
+}
+
+/**
+ * Read all content files from a profile directory (excluding profile.json).
+ * Returns an array of { path, content } pairs with forward-slash paths.
+ */
+function readProfileFiles(profileDir) {
+  const files = [];
+
+  function walk(dir, relativePath = '') {
+    const entries = readdirSync(dir);
+    for (const entry of entries) {
+      if (!relativePath && entry === 'profile.json') continue;
+
+      const fullPath = join(dir, entry);
+      const relPath = relativePath ? `${relativePath}/${entry}` : entry;
+      const stat = statSync(fullPath);
+
+      if (stat.isDirectory()) {
+        walk(fullPath, relPath);
+      } else {
+        files.push({ path: relPath, content: readFileSync(fullPath, 'utf-8') });
+      }
+    }
+  }
+
+  walk(profileDir);
+  return files;
 }
 
 /**

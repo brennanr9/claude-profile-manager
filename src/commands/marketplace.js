@@ -2,10 +2,9 @@ import chalk from 'chalk';
 import ora from 'ora';
 import inquirer from 'inquirer';
 import fetch from 'node-fetch';
-import { existsSync, writeFileSync, readFileSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { existsSync, writeFileSync, readFileSync, mkdirSync, cpSync } from 'fs';
+import { join, dirname } from 'path';
 import { getConfig, claudeDirExists, DEFAULTS } from '../utils/config.js';
-import { extractDownloadedSnapshot } from '../utils/snapshot.js';
 
 const INDEX_CACHE_TIME = 60 * 60 * 1000; // 1 hour
 
@@ -346,37 +345,68 @@ export async function installFromMarketplace(profilePath, options) {
   }
   
   const spinner = ora('Downloading profile...').start();
-  
+
   try {
     const config = await getConfig();
-    
-    // Download the snapshot zip
-    const zipUrl = `https://raw.githubusercontent.com/${config.marketplaceRepo}/main/profiles/${author}/${name}/snapshot.zip`;
-    
-    const response = await fetch(zipUrl);
-    
-    if (!response.ok) {
-      if (response.status === 404) {
+    const claudeDir = config.claudeDir;
+    const baseUrl = `https://raw.githubusercontent.com/${config.marketplaceRepo}/main/profiles/${author}/${name}`;
+
+    // Fetch profile.json to get file list
+    const metaResponse = await fetch(`${baseUrl}/profile.json`);
+
+    if (!metaResponse.ok) {
+      if (metaResponse.status === 404) {
         throw new Error(`Profile not found: ${profilePath}`);
       }
-      throw new Error(`Download failed: ${response.status}`);
+      throw new Error(`Download failed: ${metaResponse.status}`);
     }
-    
-    spinner.text = 'Extracting profile...';
-    
-    const buffer = Buffer.from(await response.arrayBuffer());
-    await extractDownloadedSnapshot(buffer, options);
-    
+
+    const metadata = await metaResponse.json();
+    // Normalize paths to forward slashes (handles profiles saved on Windows)
+    const files = (metadata.files || []).map(f => f.replace(/\\/g, '/'));
+
+    if (files.length === 0) {
+      throw new Error('Profile has no files to install');
+    }
+
+    // Backup existing .claude if requested
+    if (options.backup && existsSync(claudeDir)) {
+      const backupName = `.claude-backup-${Date.now()}`;
+      const backupPath = join(DEFAULTS.profilesDir, backupName);
+      cpSync(claudeDir, backupPath, { recursive: true });
+    }
+
+    // Ensure .claude directory exists
+    mkdirSync(claudeDir, { recursive: true });
+
+    spinner.text = 'Installing profile files...';
+
+    // Download and install each file
+    for (const filePath of files) {
+      const fileUrl = `${baseUrl}/${filePath}`;
+      const fileResponse = await fetch(fileUrl);
+
+      if (!fileResponse.ok) {
+        throw new Error(`Failed to download ${filePath}: ${fileResponse.status}`);
+      }
+
+      const content = await fileResponse.text();
+      const destPath = join(claudeDir, filePath);
+
+      mkdirSync(dirname(destPath), { recursive: true });
+      writeFileSync(destPath, content);
+    }
+
     spinner.succeed(chalk.green(`Installed: ${chalk.bold(profilePath)}`));
-    
+
     if (options.backup) {
       console.log(chalk.dim('  Previous config backed up'));
     }
-    
+
     console.log('');
     console.log(chalk.green('✓ Your Claude CLI is now configured with this profile.'));
     console.log('');
-    
+
   } catch (error) {
     spinner.fail(chalk.red(`Installation failed: ${error.message}`));
     process.exit(1);
