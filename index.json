@@ -1,20 +1,32 @@
 {
   "version": "1.0.0",
-  "lastUpdated": "2026-02-16T00:00:00Z",
+  "lastUpdated": "2026-02-17T02:21:55.668Z",
   "profiles": [
     {
       "name": "devtools",
       "author": "marketplace",
       "version": "1.0.0",
       "description": "Developer productivity commands for dependency auditing, performance profiling, and scaffolding",
-      "tags": ["productivity", "scaffolding", "dependencies"],
+      "tags": [
+        "productivity",
+        "scaffolding",
+        "dependencies"
+      ],
       "downloads": 0,
       "stars": 0,
       "createdAt": "2026-02-16T00:00:00Z",
       "contents": {
-        "instructions": ["CLAUDE.md"],
-        "commands": ["deps", "perf", "scaffold"],
-        "hooks": ["pre-commit"]
+        "instructions": [
+          "CLAUDE.md"
+        ],
+        "commands": [
+          "deps",
+          "perf",
+          "scaffold"
+        ],
+        "hooks": [
+          "pre-commit"
+        ]
       }
     },
     {
@@ -22,14 +34,26 @@
       "author": "marketplace",
       "version": "1.0.0",
       "description": "Code review, test generation, and type safety commands with quality-focused hooks",
-      "tags": ["code-review", "testing", "type-safety"],
+      "tags": [
+        "code-review",
+        "testing",
+        "type-safety"
+      ],
       "downloads": 0,
       "stars": 0,
       "createdAt": "2026-02-16T00:00:00Z",
       "contents": {
-        "instructions": ["CLAUDE.md"],
-        "commands": ["review", "test-gen", "types"],
-        "hooks": ["post-save"]
+        "instructions": [
+          "CLAUDE.md"
+        ],
+        "commands": [
+          "review",
+          "test-gen",
+          "types"
+        ],
+        "hooks": [
+          "post-save"
+        ]
       }
     },
     {
@@ -37,14 +61,49 @@
       "author": "marketplace",
       "version": "1.0.0",
       "description": "Git workflow commands for PR creation, changelog generation, and commit management",
-      "tags": ["git", "workflow", "pull-requests"],
+      "tags": [
+        "git",
+        "workflow",
+        "pull-requests"
+      ],
       "downloads": 0,
       "stars": 0,
       "createdAt": "2026-02-16T00:00:00Z",
       "contents": {
-        "instructions": ["CLAUDE.md"],
-        "commands": ["pr", "changelog", "squash"],
-        "hooks": ["pre-push"]
+        "instructions": [
+          "CLAUDE.md"
+        ],
+        "commands": [
+          "pr",
+          "changelog",
+          "squash"
+        ],
+        "hooks": [
+          "pre-push"
+        ]
+      }
+    },
+    {
+      "name": "unique",
+      "author": "brennanr9",
+      "version": "1.0.0",
+      "description": "",
+      "tags": [],
+      "downloads": 0,
+      "stars": 0,
+      "createdAt": "2026-02-17T02:21:55.667Z",
+      "contents": {
+        "instructions": [
+          "CLAUDE.md"
+        ],
+        "commands": [
+          "deps",
+          "perf",
+          "scaffold"
+        ],
+        "hooks": [
+          "pre-commit"
+        ]
       }
     }
   ]
