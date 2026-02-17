@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, cpSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, cpSync, rmSync } from 'fs';
 import { join, dirname, sep } from 'path';
 import { getConfig, DEFAULTS } from './config.js';
 
-// Files/patterns to exclude by default (secrets, caches, etc.)
+// Files/patterns to exclude by default (secrets, caches, infra)
 const DEFAULT_EXCLUDES = [
   '.credentials',
   '.auth',
@@ -12,7 +12,25 @@ const DEFAULT_EXCLUDES = [
   'oauth_token*',
   '.cache',
   'node_modules',
-  '.git'
+  '.git',
+  // Claude Code plugin infrastructure — present in every install,
+  // not user-authored content. Excluded from snapshots and preserved
+  // during profile installs (cleanProfileContent).
+  'plugins/cache',
+  'plugins/install-counts-cache',
+  'plugins/installed_plugins',
+  'plugins/known_marketplaces',
+  'plugins/marketplaces'
+];
+
+// Plugin subdirectories that are Claude Code infrastructure.
+// These must be preserved when cleaning profile content.
+const PLUGIN_INFRA_DIRS = [
+  'cache',
+  'install-counts-cache',
+  'installed_plugins',
+  'known_marketplaces',
+  'marketplaces'
 ];
 
 // Files that are safe to include (functional customizations only)
@@ -212,11 +230,12 @@ function isAllowed(name, path) {
  * Check if a file/folder should be excluded
  */
 function shouldExclude(name, path, excludes) {
+  const normalizedPath = path.split(sep).join('/');
   for (const pattern of excludes) {
     if (pattern.startsWith('*.')) {
       const ext = pattern.slice(1);
       if (name.endsWith(ext)) return true;
-    } else if (name === pattern || path === pattern) {
+    } else if (name === pattern || normalizedPath === pattern) {
       return true;
     } else if (pattern.endsWith('*') && name.startsWith(pattern.slice(0, -1))) {
       return true;
@@ -253,10 +272,48 @@ export async function extractSnapshot(profileName, options = {}) {
   // Ensure .claude directory exists
   mkdirSync(claudeDir, { recursive: true });
 
+  // Clean out old profile content before installing new files
+  cleanProfileContent(claudeDir);
+
   // Copy profile files (excluding profile.json) into .claude
   copyProfileFiles(profileDir, claudeDir);
 
   return { claudeDir };
+}
+
+/**
+ * Remove existing profile content from a .claude directory.
+ * Only removes items in the SAFE_INCLUDES allowlist (commands/, hooks/, etc.)
+ * so non-profile files (settings, credentials) are preserved.
+ */
+export function cleanProfileContent(claudeDir) {
+  // Directories to wipe entirely
+  const contentDirs = ['commands', 'skills', 'hooks', 'mcp_servers', 'agents'];
+  for (const dir of contentDirs) {
+    const dirPath = join(claudeDir, dir);
+    if (existsSync(dirPath)) {
+      rmSync(dirPath, { recursive: true, force: true });
+    }
+  }
+
+  // Plugins: only remove user-authored content, preserve Claude Code infra
+  const pluginsDir = join(claudeDir, 'plugins');
+  if (existsSync(pluginsDir)) {
+    for (const entry of readdirSync(pluginsDir)) {
+      if (!PLUGIN_INFRA_DIRS.includes(entry)) {
+        rmSync(join(pluginsDir, entry), { recursive: true, force: true });
+      }
+    }
+  }
+
+  // Individual files to remove
+  const contentFiles = ['CLAUDE.md', 'mcp.json'];
+  for (const file of contentFiles) {
+    const filePath = join(claudeDir, file);
+    if (existsSync(filePath)) {
+      rmSync(filePath, { force: true });
+    }
+  }
 }
 
 /**

@@ -5,6 +5,7 @@ import fetch from 'node-fetch';
 import { existsSync, writeFileSync, readFileSync, mkdirSync, cpSync } from 'fs';
 import { join, dirname } from 'path';
 import { getConfig, claudeDirExists, DEFAULTS } from '../utils/config.js';
+import { cleanProfileContent } from '../utils/snapshot.js';
 
 const INDEX_CACHE_TIME = 60 * 60 * 1000; // 1 hour
 
@@ -378,6 +379,9 @@ export async function installFromMarketplace(profilePath, options) {
 
     // Ensure .claude directory exists
     mkdirSync(claudeDir, { recursive: true });
+
+    // Clean out old profile content before installing new files
+    cleanProfileContent(claudeDir);
 
     spinner.text = 'Installing profile files...';
 
