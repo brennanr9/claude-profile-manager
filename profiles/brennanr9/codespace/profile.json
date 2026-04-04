@@ -1,0 +1,32 @@
+{
+  "name": "codespace",
+  "version": "1.0.0",
+  "description": "",
+  "tags": [],
+  "createdAt": "2026-02-16T22:46:41.484Z",
+  "claudeVersion": "2.1.44 (Claude Code)",
+  "platform": "linux",
+  "includesSecrets": false,
+  "files": [
+    "CLAUDE.md",
+    "commands/deps.md",
+    "commands/perf.md",
+    "commands/scaffold.md",
+    "hooks/pre-commit.md"
+  ],
+  "contents": {
+    "instructions": [
+      "CLAUDE.md"
+    ],
+    "commands": [
+      "deps",
+      "perf",
+      "scaffold"
+    ],
+    "hooks": [
+      "pre-commit"
+    ]
+  },
+  "author": "brennanr9",
+  "publishedAt": "2026-02-16T23:15:50.010Z"
+}
